@@ -1,0 +1,77 @@
+{
+  "sustech_command": {
+    "type": "string",
+    "description": "sustech CLI 可执行文件路径",
+    "hint": "AstrBot 运行环境无法通过 PATH 找到 sustech 时，请填写绝对路径",
+    "default": "sustech"
+  },
+  "master_password": {
+    "type": "string",
+    "description": "SUSTech 加密凭证存储主密码",
+    "hint": "只用于启动 sustech 子进程，不得输出到聊天、日志或大模型上下文",
+    "secret": true,
+    "default": ""
+  },
+  "profile": {
+    "type": "string",
+    "description": "使用的 sustech credential profile",
+    "default": "default"
+  },
+  "timeout_seconds": {
+    "type": "int",
+    "description": "单次 CLI 查询超时时间",
+    "default": 45
+  },
+  "default_deadline_days": {
+    "type": "int",
+    "description": "默认查询未来多少天的 DDL",
+    "default": 14
+  },
+  "private_only": {
+    "type": "bool",
+    "description": "是否只允许私聊查询个人课程信息",
+    "default": true
+  },
+  "allowed_users": {
+    "type": "list",
+    "description": "允许查询个人课程信息的用户 ID 列表",
+    "default": []
+  },
+  "enable_llm_tools": {
+    "type": "bool",
+    "description": "是否允许大模型自动调用 SUSTech 查询工具",
+    "default": true
+  },
+  "allow_file_operations": {
+    "type": "bool",
+    "description": "是否允许附件下载和受控本地文件写入",
+    "default": true
+  },
+  "download_root": {
+    "type": "string",
+    "description": "插件下载和导出文件的根目录",
+    "hint": "所有输出路径必须位于该目录内，建议使用 AstrBot data 目录下的专用子目录",
+    "default": "data/sustech-cli/files"
+  },
+  "input_root": {
+    "type": "string",
+    "description": "允许作业提交读取的本地输入文件根目录",
+    "hint": "插件不得读取该目录之外的文件",
+    "default": "data/sustech-cli/inputs"
+  },
+  "max_download_bytes": {
+    "type": "int",
+    "description": "单个下载文件的最大字节数",
+    "default": 52428800
+  },
+  "allow_assignment_submission": {
+    "type": "bool",
+    "description": "是否允许作业提交预览和确认流程",
+    "default": true
+  },
+  "confirmation_ttl_seconds": {
+    "type": "int",
+    "description": "作业提交预览确认令牌的有效时间",
+    "default": 600
+  }
+}
