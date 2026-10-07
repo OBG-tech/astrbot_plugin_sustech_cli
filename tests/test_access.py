@@ -12,9 +12,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from access import AccessController, ConfirmationStore  # noqa: E402
-from errors import AccessDeniedError, SustechError  # noqa: E402
+from sustech_cli.access import AccessController, ConfirmationStore  # noqa: E402
+from sustech_cli.errors import AccessDeniedError, SustechError  # noqa: E402
 
 BASE_CONFIG = {
     "private_only": True,
@@ -134,7 +133,7 @@ class ConfirmationStoreTests(unittest.TestCase):
         store = ConfirmationStore(1)
         token = create_token(store)
         future = time.time() + 10
-        with mock.patch("access.time.time", return_value=future):
+        with mock.patch("sustech_cli.access.time.time", return_value=future):
             with self.assertRaises(SustechError):
                 store.consume(token, user_id="admin-1", session_id="session-a")
 

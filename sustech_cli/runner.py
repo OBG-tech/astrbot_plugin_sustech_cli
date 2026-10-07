@@ -25,24 +25,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-try:  # 插件目录加载方式不定，兼容包内与扁平两种导入
-    from .errors import (
-        CLI_ERROR_MESSAGES,
-        CliError,
-        CliTimeoutError,
-        ConfigError,
-        ValidationError,
-        message_for_cli_error,
-    )
-except ImportError:  # pragma: no cover - 扁平布局
-    from errors import (
-        CLI_ERROR_MESSAGES,
-        CliError,
-        CliTimeoutError,
-        ConfigError,
-        ValidationError,
-        message_for_cli_error,
-    )
+from .errors import (
+    CLI_ERROR_MESSAGES,
+    CliError,
+    CliTimeoutError,
+    ConfigError,
+    ValidationError,
+    message_for_cli_error,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -16,14 +16,13 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from errors import (  # noqa: E402
+from sustech_cli.errors import (  # noqa: E402
     CliError,
     CliTimeoutError,
     ConfigError,
     ValidationError,
 )
-from runner import SustechRunner, resolve_output_path, sha256_file  # noqa: E402
+from sustech_cli.runner import SustechRunner, resolve_output_path, sha256_file  # noqa: E402
 
 FAKE_CLI = r'''
 import json
@@ -161,7 +160,7 @@ class EnvAndProcessTests(RunnerTestBase):
         self.assertIn("主密码尚未配置", ctx.exception.user_message)
 
     async def test_password_not_in_logs(self):
-        with self.assertLogs("runner", level="INFO") as captured:
+        with self.assertLogs("sustech_cli.runner", level="INFO") as captured:
             await self.runner.status()
         for line in captured.output:
             self.assertNotIn("test-master-password", line)

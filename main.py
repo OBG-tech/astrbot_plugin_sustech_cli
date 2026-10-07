@@ -7,16 +7,10 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api import AstrBotConfig, logger
 
-try:
-    from .runner import SustechRunner, sha256_file
-    from .access import AccessController, ConfirmationStore
-    from .errors import SustechError
-    from . import formatter
-except ImportError:
-    from runner import SustechRunner, sha256_file
-    from access import AccessController, ConfirmationStore
-    from errors import SustechError
-    import formatter
+from sustech_cli.runner import SustechRunner, sha256_file
+from sustech_cli.access import AccessController, ConfirmationStore
+from sustech_cli.errors import SustechError
+from sustech_cli import formatter
 
 
 _ERROR_MESSAGE = "SUSTech 查询失败，请稍后重试。"

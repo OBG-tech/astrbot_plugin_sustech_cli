@@ -13,10 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-try:  # 兼容包内与扁平两种导入方式
-    from .errors import AccessDeniedError, SustechError
-except ImportError:  # pragma: no cover - 扁平布局
-    from errors import AccessDeniedError, SustechError
+from .errors import AccessDeniedError, SustechError
 
 _TOKEN_INVALID_MESSAGE = "确认令牌无效或已过期，请重新执行提交预览。"
 _FILE_OPS_DISABLED_MESSAGE = "文件下载与导出功能未启用。"
