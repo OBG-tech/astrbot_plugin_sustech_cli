@@ -358,15 +358,20 @@ class SustechRunner:
                 code=self._extract_error_code(stdout_text, stderr_bytes),
             )
         try:
-            data = json.loads(stdout_text) if stdout_text else {}
+            envelope = json.loads(stdout_text) if stdout_text else {}
         except json.JSONDecodeError:
             raise CliError(message_for_cli_error(None)) from None
-        if not isinstance(data, dict):
+        if not isinstance(envelope, dict):
             raise CliError(message_for_cli_error(None))
         embedded_code = self._extract_error_code(stdout_text, b"")
         if embedded_code:
             raise CliError(message_for_cli_error(embedded_code), code=embedded_code)
-        return data
+        # sustech-cli --json 输出信封 {schemaVersion, ok, command, data}，
+        # 真实负载在 data 字段内。
+        payload = envelope.get("data")
+        if isinstance(payload, dict):
+            return payload
+        return envelope
 
     @staticmethod
     def _extract_error_code(stdout_text: str, stderr_bytes: bytes) -> str | None:
@@ -394,7 +399,7 @@ class SustechRunner:
 
     def _finalize_output(self, data: dict, operation: str, suggested_name: str) -> dict:
         """校验 CLI 写入的文件在 download_root 内、未超限，并补充文件信息。"""
-        raw_path = data.get("file") or data.get("path") or ""
+        raw_path = data.get("file") or data.get("path") or data.get("destination") or ""
         resolved_root = self._download_root.resolve()
         if raw_path:
             written = Path(str(raw_path)).resolve()
@@ -473,7 +478,8 @@ class SustechRunner:
         args = ["bb", "courses"]
         keyword = validate_query(query)
         if keyword:
-            args += ["--query", keyword]
+            # CLI 的查询词是位置参数：sustech bb courses [QUERY]
+            args.append(keyword)
         return await self._run("courses", args)
 
     async def download_attachment(

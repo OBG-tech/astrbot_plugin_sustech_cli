@@ -33,9 +33,19 @@ import time
 args = [a for a in sys.argv[1:] if a != "--json"]
 
 
-def out(payload, code=0):
-    print(json.dumps(payload))
+def ok(command, data, code=0):
+    """模拟 sustech-cli --json 的成功信封 {schemaVersion, ok, command, data}。"""
+    print(json.dumps({"schemaVersion": "1", "ok": True, "command": command,
+                      "data": data}))
     sys.exit(code)
+
+
+def fail(code_str, message, exit_code=1):
+    """模拟 sustech-cli --json 的错误信封。"""
+    print(json.dumps({"schemaVersion": "1", "ok": False,
+                      "command": " ".join(args[:3]),
+                      "error": {"code": code_str, "message": message}}))
+    sys.exit(exit_code)
 
 
 def getopt(flag, default=None):
@@ -48,25 +58,34 @@ def getopt(flag, default=None):
 
 if os.environ.get("FAKE_SLEEP"):
     time.sleep(float(os.environ["FAKE_SLEEP"]))
-    out({"command": "slept"})
+    ok("slept", {})
 
 if os.environ.get("FAKE_ERROR_CODE"):
-    out({"error": {"code": os.environ["FAKE_ERROR_CODE"], "message": "boom-secret-detail"}}, 1)
+    fail(os.environ["FAKE_ERROR_CODE"], "boom-secret-detail", 1)
 
 if args[:2] == ["auth", "status"]:
-    out({
-        "command": "auth status",
+    ok("auth status", {
         "profile": os.environ.get("SUSTECH_PROFILE"),
         "sid": os.environ.get("SUSTECH_SID", ""),
         "has_cas_password": bool(os.environ.get("SUSTECH_PASSWORD")),
         "has_password": bool(os.environ.get("SUSTECH_MASTER_PASSWORD")),
         "password_value": os.environ.get("SUSTECH_MASTER_PASSWORD", ""),
-        "authenticated": True,
+        "configured": True,
+        "credentialAvailable": True,
+        "backend": "linux-encrypted-file",
     })
 
-if args[:2] in (["bb", "deadlines"], ["tis", "schedule"], ["bb", "courses"]):
+if args[:2] == ["bb", "deadlines"]:
     items = json.loads(os.environ.get("FAKE_ITEMS", "[]"))
-    out({"command": " ".join(args[:2]), "items": items})
+    ok("bb deadlines", {"deadlines": items})
+
+if args[:2] == ["tis", "schedule"]:
+    items = json.loads(os.environ.get("FAKE_ITEMS", "[]"))
+    ok("tis schedule", {"entries": items})
+
+if args[:2] == ["bb", "courses"]:
+    items = json.loads(os.environ.get("FAKE_ITEMS", "[]"))
+    ok("bb courses", {"courses": items})
 
 if args[:2] == ["bb", "download"]:
     dest = getopt("--destination")
@@ -75,46 +94,48 @@ if args[:2] == ["bb", "download"]:
         outside = os.environ["FAKE_ESCAPE_PATH"]
         with open(outside, "wb") as handle:
             handle.write(b"escaped")
-        out({"command": "bb download", "file": outside})
+        ok("bb download", {"destination": outside})
     if mode == "nowrite":
-        out({"command": "bb download", "file": dest})
+        ok("bb download", {"destination": dest})
     content = os.environ.get("FAKE_DOWNLOAD_CONTENT", "data").encode()
     if mode == "big":
         content = b"A" * int(os.environ.get("FAKE_BIG_SIZE", "1024"))
     with open(dest, "wb") as handle:
         handle.write(content)
-    out({"command": "bb download", "file": dest})
+    ok("bb download", {"destination": dest, "size": len(content)})
 
 if args[:2] == ["tis", "ical"]:
     dest = getopt("--destination")
     with open(dest, "w") as handle:
         handle.write("BEGIN:VCALENDAR\nEND:VCALENDAR\n")
-    out({"command": "tis ical", "file": dest})
+    ok("tis ical", {"file": dest})
 
 if args[:3] == ["bb", "submit", "preview"]:
-    out({
-        "command": "bb submit preview",
-        "course_name": "机器学习",
-        "assignment_name": "Assignment 1",
-        "file_name": os.path.basename(getopt("--file") or ""),
-        "is_late": False,
+    ok("bb submit preview", {
+        "mode": "preview",
+        "target": {"courseId": getopt("--course-id")},
+        "assignment": {"title": "Assignment 1"},
+        "submission": {"kind": "file",
+                       "file": {"name": os.path.basename(getopt("--file") or "")}},
+        "late": False,
     })
 
 if args[:3] == ["bb", "submit", "apply"]:
     if "--confirm" not in args or not getopt("--expected-sha256"):
-        out({"error": {"code": "CONFIRMATION_REQUIRED", "message": "missing confirm"}}, 2)
+        fail("CONFIRMATION_REQUIRED", "missing confirm", 2)
     if os.environ.get("FAKE_SUBMIT_UNKNOWN"):
-        out({"command": "bb submit apply", "status": "unknown",
-             "code": "DO_NOT_RETRY_AUTOMATICALLY"})
-    out({
-        "command": "bb submit apply",
-        "status": "submitted",
-        "course_name": "机器学习",
-        "assignment_name": "Assignment 1",
+        fail("BLACKBOARD_SUBMISSION_OUTCOME_UNKNOWN",
+             "Blackboard submission outcome is uncertain.", 5)
+    ok("bb submit apply", {
+        "mode": "apply",
+        "target": {"courseId": getopt("--course-id")},
+        "assignment": {"title": "Assignment 1"},
+        "attempt": {"status": "NeedsGrading"},
+        "verification": {"status": "confirmed"},
         "sha256_seen": getopt("--expected-sha256"),
     })
 
-out({"error": {"code": "UNKNOWN_COMMAND", "message": " ".join(args)}}, 2)
+fail("UNKNOWN_COMMAND", " ".join(args), 2)
 '''
 
 
@@ -184,10 +205,10 @@ class EnvAndProcessTests(RunnerTestBase):
         for line in captured.output:
             self.assertNotIn("test-master-password", line)
 
-    async def test_json_stdout_parsed(self):
+    async def test_json_envelope_unwrapped(self):
         with mock.patch.dict(os.environ, {"FAKE_ITEMS": '[{"name": "机器学习"}]'}):
             data = await self.runner.courses()
-        self.assertEqual(data["items"], [{"name": "机器学习"}])
+        self.assertEqual(data["courses"], [{"name": "机器学习"}])
 
     async def test_nonzero_exit_maps_known_error_code(self):
         with mock.patch.dict(os.environ, {"FAKE_ERROR_CODE": "MASTER_PASSWORD_INVALID"}):
@@ -232,7 +253,7 @@ class ParameterValidationTests(RunnerTestBase):
 
     async def test_days_boundary_accepted(self):
         data = await self.runner.deadlines(days=90)
-        self.assertEqual(data["command"], "bb deadlines")
+        self.assertEqual(data["deadlines"], [])
 
     async def test_invalid_submission_state_rejected(self):
         with self.assertRaises(ValidationError):
@@ -240,7 +261,7 @@ class ParameterValidationTests(RunnerTestBase):
 
     async def test_valid_submission_state_accepted(self):
         data = await self.runner.deadlines(submission_state="in_progress")
-        self.assertEqual(data["command"], "bb deadlines")
+        self.assertEqual(data["deadlines"], [])
 
     async def test_invalid_date_rejected(self):
         for bad in ("2026-13-01", "2026-02-30", "not-a-date"):
@@ -351,7 +372,8 @@ class SubmissionTests(RunnerTestBase):
         data = await self.runner.submit_preview("c1", "answer.pdf", content_id="k1")
         self.assertEqual(data["local_file"]["sha256"], self.submit_sha)
         self.assertEqual(data["local_file"]["size"], len(b"%PDF-fake"))
-        self.assertEqual(data["course_name"], "机器学习")
+        self.assertEqual(data["assignment"]["title"], "Assignment 1")
+        self.assertEqual(data["target"]["courseId"], "c1")
 
     async def test_submit_preview_file_outside_input_root_rejected(self):
         outside = self.root / "evil.pdf"
@@ -370,7 +392,7 @@ class SubmissionTests(RunnerTestBase):
         data = await self.runner.submit_apply(
             "c1", "answer.pdf", self.submit_sha, content_id="k1"
         )
-        self.assertEqual(data["status"], "submitted")
+        self.assertEqual(data["verification"]["status"], "confirmed")
         self.assertEqual(data["sha256_seen"], self.submit_sha)
 
     async def test_submit_apply_invalid_sha_rejected(self):
@@ -378,13 +400,15 @@ class SubmissionTests(RunnerTestBase):
             await self.runner.submit_apply("c1", "answer.pdf", "not-a-sha",
                                            content_id="k1")
 
-    async def test_submit_apply_uncertain_result_not_raised(self):
-        # DO_NOT_RETRY_AUTOMATICALLY 属于业务结果，应交给上层格式化而不是报错
+    async def test_submit_apply_uncertain_result_maps_no_retry_message(self):
+        # 真实 CLI 以非零退出 + BLACKBOARD_SUBMISSION_OUTCOME_UNKNOWN 报告不确定结果
         with mock.patch.dict(os.environ, {"FAKE_SUBMIT_UNKNOWN": "1"}):
-            data = await self.runner.submit_apply(
-                "c1", "answer.pdf", self.submit_sha, content_id="k1"
-            )
-        self.assertEqual(data["code"], "DO_NOT_RETRY_AUTOMATICALLY")
+            with self.assertRaises(CliError) as ctx:
+                await self.runner.submit_apply(
+                    "c1", "answer.pdf", self.submit_sha, content_id="k1"
+                )
+        self.assertEqual(ctx.exception.code, "BLACKBOARD_SUBMISSION_OUTCOME_UNKNOWN")
+        self.assertIn("不会自动重试", ctx.exception.user_message)
 
 
 class Sha256HelperTests(unittest.TestCase):

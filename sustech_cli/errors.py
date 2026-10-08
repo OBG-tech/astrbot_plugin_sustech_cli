@@ -15,6 +15,10 @@ CLI_ERROR_MESSAGES: dict[str, str] = {
     "CREDENTIAL_STORE_UNAVAILABLE": "本地凭证存储后端不可用",
     "CREDENTIAL_STORE_TIMEOUT": "本地凭证存储响应超时",
     "CREDENTIALS_REQUIRED": "尚未配置 SUSTech 登录凭证",
+    "BLACKBOARD_SUBMISSION_OUTCOME_UNKNOWN": (
+        "Blackboard 返回的提交结果不确定，插件不会自动重试。"
+        "请登录 Blackboard 检查提交状态后再决定是否操作。"
+    ),
 }
 
 _FALLBACK_MESSAGE = "SUSTech 查询失败，请稍后重试。"

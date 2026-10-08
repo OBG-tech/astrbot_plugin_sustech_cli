@@ -78,18 +78,20 @@ class SustechCliPlugin(Star):
         )
 
     def _status_text(self, data: dict) -> str:
-        profile = data.get("profile") or data.get("current_profile") or "未知"
-        authenticated = data.get("authenticated")
-        if authenticated is True or str(authenticated).lower() == "true":
+        # ``auth status`` 负载字段见 sustech-cli getCredentialStatus()
+        profile = data.get("profile") or "未知"
+        configured = data.get("configured") is True
+        available = data.get("credentialAvailable") is True
+        if available:
             auth_text = "已登录"
-        elif authenticated is False or str(authenticated).lower() == "false":
-            auth_text = "未登录"
+        elif configured:
+            auth_text = "凭证已配置但不可用"
         else:
-            auth_text = "未知"
+            auth_text = "未登录"
         lines = ["SUSTech 状态：", f"Profile：{profile}", f"认证状态：{auth_text}"]
-        if "credential_store" in data:
-            store = data.get("credential_store")
-            lines.append(f"凭证存储：{'可用' if store else '不可用'}")
+        backend = data.get("backend")
+        if backend:
+            lines.append(f"凭证存储：{backend}")
         return "\n".join(lines[:4])
 
 

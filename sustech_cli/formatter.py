@@ -8,11 +8,11 @@ from typing import Any
 _UNKNOWN = "未知"
 
 
-def _items(data: dict) -> list[Any]:
-    """Return the command's result list using its supported field aliases."""
+def _items(data: dict, *keys: str) -> list[Any]:
+    """Return the command's result list from the first matching payload key."""
     if not isinstance(data, dict):
         return []
-    for key in ("items", "results"):
+    for key in keys:
         value = data.get(key)
         if isinstance(value, list):
             return value
@@ -34,9 +34,6 @@ def _text(item: Any, *keys: str) -> str:
     return _UNKNOWN if value is None else str(value)
 
 
-def _course_name(item: Any) -> str:
-    return _text(item, "course_name", "course", "title")
-
 
 def _size_text(size: Any) -> str:
     try:
@@ -57,8 +54,8 @@ def _number(value: float) -> str:
 
 
 def format_deadlines(data: dict, days: int) -> str:
-    """Format upcoming course deadlines."""
-    items = _items(data)
+    """Format upcoming course deadlines (``bb deadlines`` payload)."""
+    items = _items(data, "deadlines")
     if not items:
         return f"未来 {days} 天没有发现课程 DDL。"
 
@@ -71,12 +68,14 @@ def format_deadlines(data: dict, days: int) -> str:
     }
     lines = [f"未来 {days} 天共有 {len(items)} 项课程 DDL：", ""]
     for index, item in enumerate(items, 1):
-        raw_status = _value(item, "status", "state")
+        summary = _value(item, "attemptSummary")
+        raw_status = _value(summary, "state") if isinstance(summary, dict) else None
         status = status_map.get(str(raw_status), "其他") if raw_status is not None else _UNKNOWN
+        title = _text(item, "title")
         lines.extend(
             [
-                f"{index}. {_course_name(item)}",
-                f"   截止时间：{_text(item, 'due_date', 'deadline')}",
+                f"{index}. {_text(item, 'courseName', 'course_name')} — {title}",
+                f"   截止时间：{_text(item, 'dueAt', 'due_date')}",
                 f"   状态：{status}",
             ]
         )
@@ -101,32 +100,50 @@ def _weekday_label(value: Any) -> str | None:
     return weekdays[parsed.weekday()]
 
 
-def format_schedule(data: dict, date_label: str | None = None) -> str:
-    """Format a day's course schedule."""
-    items = _items(data)
-    if not items:
-        return "当天没有课程安排。"
+def _time_label(item: Any) -> str:
+    """HH:MM-HH:MM from startAt/endAt ISO datetimes, else period range."""
+    def hhmm(value: Any) -> str | None:
+        if value is None:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).strftime("%H:%M")
+        except ValueError:
+            return None
 
-    first = items[0]
+    start = hhmm(_value(item, "startAt", "start"))
+    end = hhmm(_value(item, "endAt", "end"))
+    if start is not None or end is not None:
+        return f"{start or _UNKNOWN}-{end or _UNKNOWN}"
+    period_start = _value(item, "periodStart")
+    period_end = _value(item, "periodEnd")
+    if period_start is not None and period_end is not None:
+        return f"第{period_start}-{period_end}节"
+    return _UNKNOWN
+
+
+def format_schedule(data: dict, date_label: str | None = None) -> str:
+    """Format a course schedule (``tis schedule`` payload)."""
+    items = _items(data, "entries")
+    if not items:
+        return "没有查询到课程安排。"
+
     if date_label is None:
-        date_value = _value(first, "date")
+        date_value = _value(data, "date")
         weekday = _weekday_label(date_value)
-        if weekday is not None:
+        if date_value is not None and weekday is not None:
             date_label = f"{date_value} {weekday}"
+        elif date_value is not None:
+            date_label = str(date_value)
+        elif _value(data, "week") is not None:
+            date_label = f"第{_value(data, 'week')}周"
         else:
-            date_label = weekday or _UNKNOWN
+            date_label = _UNKNOWN
     lines = [f"{date_label}课表：", ""]
     for index, item in enumerate(items):
-        start = _value(item, "start_time", "start")
-        end = _value(item, "end_time", "end")
-        if start is not None or end is not None:
-            time_label = f"{start if start is not None else _UNKNOWN}-{end if end is not None else _UNKNOWN}"
-        else:
-            time_label = _text(item, "time")
         lines.extend(
             [
-                f"{time_label}  {_course_name(item)}",
-                f"地点：{_text(item, 'location', 'room')}",
+                f"{_time_label(item)}  {_text(item, 'courseName', 'course_name')}",
+                f"地点：{_text(item, 'room', 'location')}",
                 f"教师：{_text(item, 'teacher', 'instructor')}",
             ]
         )
@@ -136,13 +153,17 @@ def format_schedule(data: dict, date_label: str | None = None) -> str:
 
 
 def format_courses(data: dict) -> str:
-    """Format the current Blackboard course list."""
-    items = _items(data)
+    """Format the current Blackboard course list (``bb courses`` payload)."""
+    items = _items(data, "courses")
     if not items:
         return "当前没有查询到 Blackboard 课程。"
     lines = ["当前 Blackboard 课程：", ""]
     for index, item in enumerate(items, 1):
-        lines.append(f"{index}. {_text(item, 'name', 'course_name', 'course', 'title')}")
+        code = _value(item, "courseCode")
+        course_id = _value(item, "id")
+        suffix = " ".join(str(part) for part in (code, course_id) if part)
+        name = _text(item, "name", "courseName", "title")
+        lines.append(f"{index}. {name}（{suffix}）" if suffix else f"{index}. {name}")
     return "\n".join(lines)
 
 
@@ -163,14 +184,24 @@ def format_submit_preview(preview: dict, token: str) -> str:
     local_file = _value(preview, "local_file")
     if not isinstance(local_file, dict):
         local_file = {}
-    late = _value(preview, "is_late")
+    assignment = _value(preview, "assignment")
+    if not isinstance(assignment, dict):
+        assignment = {}
+    target = _value(preview, "target")
+    if not isinstance(target, dict):
+        target = {}
+    submission = _value(preview, "submission")
+    submitted_file = _value(submission, "file") if isinstance(submission, dict) else None
+    if not isinstance(submitted_file, dict):
+        submitted_file = {}
+    late = _value(preview, "late")
     late_label = "是" if late is True or str(late).lower() == "true" else "否"
     return "\n".join(
         [
             "请确认是否提交以下作业：",
-            f"课程：{_text(preview, 'course_name', 'course', 'title')}",
-            f"作业：{_text(preview, 'assignment_name')}",
-            f"文件：{_text(preview, 'file_name')}",
+            f"课程：{_text(target, 'courseId', 'course_id')}",
+            f"作业：{_text(assignment, 'title')}",
+            f"文件：{_text(submitted_file, 'name')}",
             f"大小：{_size_text(_value(local_file, 'size'))}",
             f"SHA-256：{_text(local_file, 'sha256')}",
             f"是否迟交：{late_label}",
@@ -184,22 +215,21 @@ def format_submit_preview(preview: dict, token: str) -> str:
 
 
 def format_submit_result(data: dict) -> str:
-    """Format a submission result, including the non-retryable uncertainty case."""
-    if isinstance(data, dict) and (
-        data.get("status") == "unknown"
-        or data.get("code") == "DO_NOT_RETRY_AUTOMATICALLY"
-    ):
-        return "\n".join(
-            [
-                "Blackboard 返回的提交结果不确定，插件不会自动重试。",
-                "请登录 Blackboard 检查提交状态后再决定是否操作。",
-            ]
-        )
+    """Format a successful submission result (``bb submit apply`` payload)."""
+    assignment = _value(data, "assignment")
+    if not isinstance(assignment, dict):
+        assignment = {}
+    target = _value(data, "target")
+    if not isinstance(target, dict):
+        target = {}
+    verification = _value(data, "verification")
+    verified = isinstance(verification, dict) and verification.get("status") == "confirmed"
+    status_text = "已确认" if verified else "已提交（回读验证未完全确认）"
     return "\n".join(
         [
             "作业提交成功。",
-            f"课程：{_text(data, 'course_name', 'course', 'title')}",
-            f"作业：{_text(data, 'assignment_name')}",
-            "提交状态：已确认",
+            f"课程：{_text(target, 'courseId', 'course_id')}",
+            f"作业：{_text(assignment, 'title')}",
+            f"提交状态：{status_text}",
         ]
     )

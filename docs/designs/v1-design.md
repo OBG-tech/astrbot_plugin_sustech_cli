@@ -979,8 +979,10 @@ Blackboard 返回的提交结果不确定，插件不会自动重试。
 
 ```json
 {
+  "schemaVersion": "1",
+  "ok": true,
   "command": "bb deadlines",
-  "items": []
+  "data": {"deadlines": []}
 }
 ```
 
