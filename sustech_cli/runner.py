@@ -61,7 +61,9 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_QUERY_LEN = 100
 _MAX_COMMENT_LEN = 2000
 
-_MISSING_PASSWORD_MESSAGE = "SUSTECH 主密码尚未配置，请在 AstrBot 插件设置中填写。"
+_MISSING_CREDENTIALS_MESSAGE = (
+    "SUSTech 凭证尚未配置，请在 AstrBot 插件设置中填写学号与密码（或加密存储主密码）。"
+)
 
 
 @dataclass(frozen=True)
@@ -281,6 +283,8 @@ class SustechRunner:
         self._command = str(_cfg(config, "sustech_command", "sustech")).strip() or "sustech"
         self._master_password = str(_cfg(config, "master_password", "") or "")
         self._profile = str(_cfg(config, "profile", "default") or "default")
+        self._sid = str(_cfg(config, "sid", "") or "").strip()
+        self._cas_password = str(_cfg(config, "cas_password", "") or "")
         try:
             self._timeout = float(_cfg(config, "timeout_seconds", 45))
         except (TypeError, ValueError):
@@ -301,12 +305,18 @@ class SustechRunner:
     async def _run(self, operation: str, args: list[str]) -> dict:
         if operation not in ALLOWED_OPERATIONS:
             raise ValidationError(f"不允许的操作：{operation}")
-        if not self._master_password:
+        has_direct = bool(self._sid and self._cas_password)
+        if not has_direct and not self._master_password:
             # 不能让子进程进入交互式等待（设计文档 §7.2）
-            raise ConfigError(_MISSING_PASSWORD_MESSAGE)
+            raise ConfigError(_MISSING_CREDENTIALS_MESSAGE)
 
         env = os.environ.copy()
-        env["SUSTECH_MASTER_PASSWORD"] = self._master_password
+        if has_direct:
+            # sustech-cli 凭证解析顺序中 environment 优先于加密存储
+            env["SUSTECH_SID"] = self._sid
+            env["SUSTECH_PASSWORD"] = self._cas_password
+        if self._master_password:
+            env["SUSTECH_MASTER_PASSWORD"] = self._master_password
         env["SUSTECH_PROFILE"] = self._profile
 
         started = time.monotonic()

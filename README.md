@@ -57,7 +57,9 @@ AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustec
 
    ```text
    sustech_command: /usr/local/bin/sustech   # 建议绝对路径，systemd/Docker 不继承 Shell PATH
-   master_password: <填写你的主密码>        # secret 字段，仅用于子进程环境变量
+   sid: <学号或工号>                          # 统一身份认证账号
+   cas_password: <统一身份认证密码>           # secret 字段，仅用于子进程环境变量
+   # master_password: <可选>                 # 仅当不用 sid/cas_password、改用加密凭证存储时填写
    profile: default
    private_only: true
    allowed_users: [<管理员用户 ID>]

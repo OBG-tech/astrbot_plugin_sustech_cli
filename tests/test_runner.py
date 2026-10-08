@@ -57,6 +57,8 @@ if args[:2] == ["auth", "status"]:
     out({
         "command": "auth status",
         "profile": os.environ.get("SUSTECH_PROFILE"),
+        "sid": os.environ.get("SUSTECH_SID", ""),
+        "has_cas_password": bool(os.environ.get("SUSTECH_PASSWORD")),
         "has_password": bool(os.environ.get("SUSTECH_MASTER_PASSWORD")),
         "password_value": os.environ.get("SUSTECH_MASTER_PASSWORD", ""),
         "authenticated": True,
@@ -153,11 +155,28 @@ class EnvAndProcessTests(RunnerTestBase):
         self.assertEqual(data["password_value"], "test-master-password")
         self.assertEqual(data["profile"], "test-profile")
 
-    async def test_missing_password_fails_before_spawning(self):
+    async def test_missing_credentials_fails_before_spawning(self):
         runner = SustechRunner({**self.config, "master_password": ""})
         with self.assertRaises(ConfigError) as ctx:
             await runner.status()
-        self.assertIn("主密码尚未配置", ctx.exception.user_message)
+        self.assertIn("凭证尚未配置", ctx.exception.user_message)
+
+    async def test_direct_credentials_passed_via_env(self):
+        runner = SustechRunner({
+            **self.config,
+            "master_password": "",
+            "sid": "12310001",
+            "cas_password": "cas-secret",
+        })
+        data = await runner.status()
+        self.assertEqual(data["sid"], "12310001")
+        self.assertTrue(data["has_cas_password"])
+        self.assertFalse(data["has_password"])
+
+    async def test_direct_credentials_alone_satisfy_requirement(self):
+        runner = SustechRunner({**self.config, "master_password": "", "sid": "", "cas_password": "x"})
+        with self.assertRaises(ConfigError):
+            await runner.status()
 
     async def test_password_not_in_logs(self):
         with self.assertLogs("sustech_cli.runner", level="INFO") as captured:
