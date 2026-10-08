@@ -167,6 +167,38 @@ def format_courses(data: dict) -> str:
     return "\n".join(lines)
 
 
+def format_contents(data: dict) -> str:
+    """Format one level of course content items (``bb content`` payload)."""
+    items = _items(data, "items")
+    if not items:
+        return "该目录下没有内容项。"
+    kind_map = {"folder": "文件夹", "file": "文件", "assignment": "作业", "document": "文档"}
+    lines = ["课程内容：", ""]
+    for index, item in enumerate(items, 1):
+        kind = kind_map.get(str(_value(item, "kind")), "内容")
+        title = _text(item, "title")
+        content_id = _text(item, "id")
+        child_hint = "（含子项目）" if _value(item, "hasChildren") is True else ""
+        lines.append(f"{index}. [{kind}] {title}{child_hint}（id: {content_id}）")
+    lines.extend(["", "文件夹可用 parent_id 继续展开；文件/作业可查看其附件。"])
+    return "\n".join(lines)
+
+
+def format_attachments(data: dict) -> str:
+    """Format the attachment list of one content item (``bb attachments`` payload)."""
+    items = _items(data, "attachments")
+    if not items:
+        return "该内容项没有附件。"
+    lines = ["附件列表：", ""]
+    for index, item in enumerate(items, 1):
+        name = _text(item, "fileName", "name")
+        attachment_id = _text(item, "id")
+        mime = _value(item, "mimeType")
+        suffix = f" · {mime}" if mime else ""
+        lines.append(f"{index}. {name}{suffix}（id: {attachment_id}）")
+    return "\n".join(lines)
+
+
 def format_download_result(file: dict) -> str:
     """Format a successful file download result."""
     return "\n".join(

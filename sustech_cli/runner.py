@@ -42,6 +42,8 @@ ALLOWED_OPERATIONS: frozenset[str] = frozenset(
         "deadlines",
         "schedule",
         "courses",
+        "contents",
+        "content_attachments",
         "download_attachment",
         "export_calendar",
         "submit_preview",
@@ -482,6 +484,20 @@ class SustechRunner:
             args.append(keyword)
         return await self._run("courses", args)
 
+    async def contents(self, course_id: str, parent_id: str | None = None) -> dict:
+        """列出一层课程内容项（文件夹/文件/作业），供逐级遍历目录。"""
+        course = validate_opaque_id(course_id, "course_id")
+        args = ["bb", "content", course]
+        if parent_id and str(parent_id).strip():
+            args += ["--parent-id", validate_opaque_id(parent_id, "parent_id")]
+        return await self._run("contents", args)
+
+    async def content_attachments(self, course_id: str, content_id: str) -> dict:
+        """列出某个内容项上的教师附件（含下载所需的 attachment_id）。"""
+        course = validate_opaque_id(course_id, "course_id")
+        content = validate_opaque_id(content_id, "content_id")
+        return await self._run("content_attachments", ["bb", "attachments", course, content])
+
     async def download_attachment(
         self, course_id: str, content_id: str, attachment_id: str
     ) -> dict:
@@ -502,7 +518,22 @@ class SustechRunner:
         ]
         try:
             data = await self._run("download_attachment", args)
-            return self._finalize_output(data, "download", destination.name)
+            result = self._finalize_output(data, "download", destination.name)
+            # CLI 返回真实文件名（attachment.fileName）：重命名受控文件，
+            # 避免用户拿到 _XXXXX_1.bin 这样的占位名。
+            attachment_info = data.get("attachment")
+            real_name = ""
+            if isinstance(attachment_info, dict):
+                real_name = str(attachment_info.get("fileName") or "").strip()
+            if real_name and sanitize_filename(real_name) != "file":
+                current = self._download_root.resolve() / result["file"]["rel_path"]
+                target = resolve_output_path(self._download_root, "download", real_name)
+                if target != current and current.is_file():
+                    current.rename(target)
+                    result = self._finalize_output(
+                        {**data, "destination": str(target)}, "download", target.name
+                    )
+            return result
         except Exception:
             # 失败时删除不完整文件（§7.5）
             if destination.exists():

@@ -87,6 +87,16 @@ if args[:2] == ["bb", "courses"]:
     items = json.loads(os.environ.get("FAKE_ITEMS", "[]"))
     ok("bb courses", {"courses": items})
 
+if args[:2] == ["bb", "content"]:
+    items = json.loads(os.environ.get("FAKE_ITEMS", "[]"))
+    ok("bb content", {"courseId": args[2], "parentId": getopt("--parent-id"),
+                      "items": items, "total": len(items)})
+
+if args[:2] == ["bb", "attachments"]:
+    items = json.loads(os.environ.get("FAKE_ATTACHMENTS", "[]"))
+    ok("bb attachments", {"courseId": args[2], "contentId": args[3],
+                          "attachments": items, "total": len(items)})
+
 if args[:2] == ["bb", "download"]:
     dest = getopt("--destination")
     mode = os.environ.get("FAKE_DOWNLOAD_MODE", "ok")
@@ -102,7 +112,8 @@ if args[:2] == ["bb", "download"]:
         content = b"A" * int(os.environ.get("FAKE_BIG_SIZE", "1024"))
     with open(dest, "wb") as handle:
         handle.write(content)
-    ok("bb download", {"destination": dest, "size": len(content)})
+    ok("bb download", {"destination": dest, "size": len(content),
+                       "attachment": {"fileName": os.environ.get("FAKE_DOWNLOAD_NAME", "lecture.pdf")}})
 
 if args[:2] == ["tis", "ical"]:
     dest = getopt("--destination")
@@ -210,6 +221,25 @@ class EnvAndProcessTests(RunnerTestBase):
             data = await self.runner.courses()
         self.assertEqual(data["courses"], [{"name": "机器学习"}])
 
+    async def test_contents_passes_parent_id_and_unwraps(self):
+        items = '[{"id": "_100_1", "title": "Week 3", "kind": "folder"}]'
+        with mock.patch.dict(os.environ, {"FAKE_ITEMS": items}):
+            data = await self.runner.contents("_c1", parent_id="_p1")
+        self.assertEqual(data["items"][0]["id"], "_100_1")
+        self.assertEqual(data["parentId"], "_p1")
+
+    async def test_contents_without_parent_id_omits_flag(self):
+        with mock.patch.dict(os.environ, {"FAKE_ITEMS": "[]"}):
+            data = await self.runner.contents("_c1")
+        self.assertIsNone(data["parentId"])
+
+    async def test_content_attachments_unwraps(self):
+        attachments = '[{"id": "_a1_1", "fileName": "week3.pdf"}]'
+        with mock.patch.dict(os.environ, {"FAKE_ATTACHMENTS": attachments}):
+            data = await self.runner.content_attachments("_c1", "_k1")
+        self.assertEqual(data["attachments"][0]["fileName"], "week3.pdf")
+        self.assertEqual(data["contentId"], "_k1")
+
     async def test_nonzero_exit_maps_known_error_code(self):
         with mock.patch.dict(os.environ, {"FAKE_ERROR_CODE": "MASTER_PASSWORD_INVALID"}):
             with self.assertRaises(CliError) as ctx:
@@ -306,6 +336,26 @@ class DownloadTests(RunnerTestBase):
         self.assertEqual(info["size"], len(b"hello-bytes"))
         self.assertEqual(info["sha256"], hashlib.sha256(b"hello-bytes").hexdigest())
         self.assertNotIn("..", Path(info["rel_path"]).parts)
+
+    async def test_download_renamed_to_real_filename(self):
+        env = {"FAKE_DOWNLOAD_CONTENT": "slides", "FAKE_DOWNLOAD_NAME": "week3-slides.pdf"}
+        with mock.patch.dict(os.environ, env):
+            data = await self.runner.download_attachment("_c1", "_k1", "_a1")
+        info = data["file"]
+        self.assertEqual(info["name"], "week3-slides.pdf")
+        written = self.download_root / info["rel_path"]
+        self.assertEqual(written.read_bytes(), b"slides")
+
+    async def test_download_real_filename_sanitized(self):
+        env = {"FAKE_DOWNLOAD_CONTENT": "x", "FAKE_DOWNLOAD_NAME": "../../etc/evil.pdf"}
+        with mock.patch.dict(os.environ, env):
+            data = await self.runner.download_attachment("_c1", "_k1", "_a1")
+        self.assertNotIn("..", Path(data["file"]["rel_path"]).parts)
+        self.assertTrue(
+            str(self.download_root / data["file"]["rel_path"]).startswith(
+                str(self.download_root.resolve())
+            )
+        )
 
     async def test_download_does_not_overwrite_existing(self):
         with mock.patch.dict(os.environ, {"FAKE_DOWNLOAD_CONTENT": "first"}):

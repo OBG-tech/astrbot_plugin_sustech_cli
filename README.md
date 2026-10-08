@@ -14,6 +14,8 @@ AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustec
 | `/sustech-ddl [days] [course]` | 查询未来 N 天 Blackboard DDL（默认 14 天） |
 | `/sustech-schedule [date]` | 查询 TIS 课表 |
 | `/sustech-courses [query]` | 查询 Blackboard 课程列表 |
+| `/sustech-contents <course_id> [parent_id]` | 列出一层课程内容（文件夹可继续展开） |
+| `/sustech-attachments <course_id> <content_id>` | 列出内容项的附件（含下载所需 ID） |
 | `/sustech-download <course_id> <content_id> <attachment_id>` | 下载附件到受控输出目录 |
 | `/sustech-calendar-export` | 导出课表为 iCalendar 文件 |
 | `/sustech-submit-preview <course_id> <content_id\|-> <file> [comment]` | 生成作业提交预览（不提交） |
@@ -21,7 +23,7 @@ AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustec
 
 ### LLM Tools
 
-`sustech_get_deadlines`、`sustech_get_schedule`、`sustech_get_courses`、`sustech_download_attachment`、`sustech_export_calendar`、`sustech_prepare_assignment_submission`。
+`sustech_get_deadlines`、`sustech_get_schedule`、`sustech_get_courses`、`sustech_get_course_contents`、`sustech_get_content_attachments`、`sustech_download_attachment`、`sustech_export_calendar`、`sustech_prepare_assignment_submission`。
 
 其中 `sustech_prepare_assignment_submission` 只能生成预览；真正的提交必须由用户显式执行 `/sustech-submit-confirm <token>`。
 

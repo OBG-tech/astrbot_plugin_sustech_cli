@@ -181,6 +181,39 @@ class SustechCliPlugin(Star):
             logger.exception("SUSTech courses failed")
             yield event.plain_result(_ERROR_MESSAGE)
 
+    @filter.command("sustech-contents")
+    async def sustech_contents(self, event: AstrMessageEvent):
+        try:
+            self._access_query(event)
+            args = self._args(event)
+            if not args:
+                yield event.plain_result("用法：/sustech-contents <course_id> [parent_id]")
+                return
+            parent_id = args[1] if len(args) > 1 else None
+            data = await self.runner.contents(args[0], parent_id)
+            yield event.plain_result(formatter.format_contents(data))
+        except SustechError as e:
+            yield event.plain_result(e.user_message)
+        except Exception:
+            logger.exception("SUSTech contents failed")
+            yield event.plain_result(_ERROR_MESSAGE)
+
+    @filter.command("sustech-attachments")
+    async def sustech_attachments(self, event: AstrMessageEvent):
+        try:
+            self._access_query(event)
+            args = self._args(event)
+            if len(args) < 2:
+                yield event.plain_result("用法：/sustech-attachments <course_id> <content_id>")
+                return
+            data = await self.runner.content_attachments(args[0], args[1])
+            yield event.plain_result(formatter.format_attachments(data))
+        except SustechError as e:
+            yield event.plain_result(e.user_message)
+        except Exception:
+            logger.exception("SUSTech attachments failed")
+            yield event.plain_result(_ERROR_MESSAGE)
+
     @filter.command("sustech-download")
     async def sustech_download(self, event: AstrMessageEvent):
         try:
@@ -304,6 +337,46 @@ class SustechCliPlugin(Star):
             return e.user_message
         except Exception:
             logger.exception("SUSTech LLM courses failed")
+            return _ERROR_MESSAGE
+
+    @filter.llm_tool(name="sustech_get_course_contents")
+    async def sustech_get_course_contents(self, event, course_id: str, parent_id: str = "") -> str:
+        """列出一层 Blackboard 课程内容项（文件夹/文件/作业），返回各项的 content_id。文件夹可用其 id 作为 parent_id 继续展开，用于定位“第几周课件”等内容。
+
+        Args:
+            course_id(string): Blackboard 课程 ID（可由 sustech_get_courses 获得）。
+            parent_id(string): 可选，文件夹内容项的 id；留空表示课程根目录。
+        """
+        try:
+            if (blocked := await self._llm_guard(event)):
+                return blocked
+            self._access_query(event)
+            data = await self.runner.contents(course_id, parent_id or None)
+            return formatter.format_contents(data)
+        except SustechError as e:
+            return e.user_message
+        except Exception:
+            logger.exception("SUSTech LLM contents failed")
+            return _ERROR_MESSAGE
+
+    @filter.llm_tool(name="sustech_get_content_attachments")
+    async def sustech_get_content_attachments(self, event, course_id: str, content_id: str) -> str:
+        """列出某个 Blackboard 内容项上的教师附件，返回下载所需的 attachment_id。之后可调用 sustech_download_attachment 下载。
+
+        Args:
+            course_id(string): Blackboard 课程 ID。
+            content_id(string): Blackboard 内容项 ID（可由 sustech_get_course_contents 获得）。
+        """
+        try:
+            if (blocked := await self._llm_guard(event)):
+                return blocked
+            self._access_query(event)
+            data = await self.runner.content_attachments(course_id, content_id)
+            return formatter.format_attachments(data)
+        except SustechError as e:
+            return e.user_message
+        except Exception:
+            logger.exception("SUSTech LLM attachments failed")
             return _ERROR_MESSAGE
 
     @filter.llm_tool(name="sustech_download_attachment")
