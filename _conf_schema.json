@@ -60,6 +60,16 @@
     "description": "是否允许附件下载和受控本地文件写入",
     "default": true
   },
+  "send_file_in_chat": {
+    "type": "bool",
+    "description": "文件产出成功后是否在聊天中投递文件本体",
+    "default": true
+  },
+  "file_message_platforms": {
+    "type": "list",
+    "description": "允许投递 File 消息段的平台白名单",
+    "default": ["qqofficial", "webchat"]
+  },
   "download_root": {
     "type": "string",
     "description": "插件下载和导出文件的根目录",

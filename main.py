@@ -4,26 +4,26 @@ from pathlib import Path
 from typing import Any
 
 from astrbot.api.star import Context, Star, register
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api import AstrBotConfig, logger
+import astrbot.api.message_components as Comp
 
 from .sustech_cli.runner import SustechRunner, sha256_file
 from .sustech_cli.access import AccessController, ConfirmationStore
 from .sustech_cli.errors import SustechError
 from .sustech_cli import formatter
-
+from .sustech_cli.delivery import prepare_file_delivery
 
 _ERROR_MESSAGE = "SUSTech 查询失败，请稍后重试。"
 
 
-@register("astrbot_plugin_sustech_cli", "OBG-tech", "通过本机 sustech CLI 查询课程信息", "1.0.0")
+@register("astrbot_plugin_sustech_cli", "OBG-tech", "通过本机 sustech CLI 查询课程信息", "1.2.0")
 class SustechCliPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
         self.runner = SustechRunner(config)
         self.access = AccessController(config)
-        ttl = 600
         try:
             ttl = int(config.get("confirmation_ttl_seconds", 600))
         except (TypeError, ValueError):
@@ -52,6 +52,54 @@ class SustechCliPlugin(Star):
         except Exception:
             value = "data/sustech-cli/inputs"
         return Path(str(value)).resolve()
+
+    def _download_root(self) -> Path:
+        try:
+            value = self.config.get("download_root", "data/sustech-cli/files")
+        except Exception:
+            value = "data/sustech-cli/files"
+        return Path(str(value))
+
+    def _file_delivery_plan(self, event, file_info: dict):
+        try:
+            platform_name = event.get_platform_name()
+        except Exception:
+            logger.warning("Unable to determine event platform; using text-only file response")
+            return None
+        return prepare_file_delivery(
+            platform_name, self.config, file_info, self._download_root()
+        )
+
+    async def _deliver_file_proactively(self, event, file_info: dict) -> bool:
+        """LLM Tool 链路：直接把文件作为 File 段主动发到当前会话。
+
+        LLM Tool 只能返回字符串，无法携带消息链，因此通过
+        ``context.send_message`` 旁路投递。平台不支持或发送失败时返回
+        ``False``，调用方回退为文本摘要。
+        """
+        plan = self._file_delivery_plan(event, file_info)
+        if plan is None:
+            return False
+        chain = MessageChain(
+            chain=[
+                Comp.Plain(f"文件：{plan.file_name}"),
+                Comp.File(name=plan.file_name, file=str(plan.abs_path)),
+            ]
+        )
+        try:
+            await self.context.send_message(event.unified_msg_origin, chain)
+            return True
+        except Exception:
+            logger.exception("SUSTech proactive file delivery failed")
+            return False
+
+
+    async def _tool_file_result(self, event, file_info: dict) -> str:
+        """LLM Tool 的文件类工具返回文本：投递成功时告知模型，否则给摘要。"""
+        summary = formatter.format_download_result(file_info)
+        if await self._deliver_file_proactively(event, file_info):
+            return summary + "\n（文件已作为附件发送到当前聊天，请告知用户查收。）"
+        return summary + "\n（当前平台或配置不支持直接发送文件附件，文件已保存到受控目录。）"
 
     def _llm_enabled(self) -> bool:
         try:
@@ -223,7 +271,20 @@ class SustechCliPlugin(Star):
                 yield event.plain_result("用法：/sustech-download <course_id> <content_id> <attachment_id>")
                 return
             data = await self.runner.download_attachment(*args[:3])
-            yield event.plain_result(formatter.format_download_result(data["file"]))
+            file_info = data["file"]
+            plan = self._file_delivery_plan(event, file_info)
+            if plan is None:
+                yield event.plain_result(formatter.format_download_result(file_info))
+                return
+            try:
+                chain = [
+                    Comp.Plain(plan.summary_text),
+                    Comp.File(name=plan.file_name, file=str(plan.abs_path)),
+                ]
+                yield event.chain_result(chain)
+            except Exception:
+                logger.exception("SUSTech download file delivery failed")
+                yield event.plain_result(plan.summary_text)
         except SustechError as e:
             yield event.plain_result(e.user_message)
         except Exception:
@@ -235,7 +296,20 @@ class SustechCliPlugin(Star):
         try:
             self._access_file(event)
             data = await self.runner.export_calendar()
-            yield event.plain_result(formatter.format_download_result(data["file"]))
+            file_info = data["file"]
+            plan = self._file_delivery_plan(event, file_info)
+            if plan is None:
+                yield event.plain_result(formatter.format_download_result(file_info))
+                return
+            try:
+                chain = [
+                    Comp.Plain(plan.summary_text),
+                    Comp.File(name=plan.file_name, file=str(plan.abs_path)),
+                ]
+                yield event.chain_result(chain)
+            except Exception:
+                logger.exception("SUSTech calendar file delivery failed")
+                yield event.plain_result(plan.summary_text)
         except SustechError as e:
             yield event.plain_result(e.user_message)
         except Exception:
@@ -393,7 +467,7 @@ class SustechCliPlugin(Star):
                 return blocked
             self._access_file(event)
             data = await self.runner.download_attachment(course_id, content_id, attachment_id)
-            return formatter.format_download_result(data["file"])
+            return await self._tool_file_result(event, data["file"])
         except SustechError as e:
             return e.user_message
         except Exception:
@@ -407,7 +481,7 @@ class SustechCliPlugin(Star):
             if (blocked := await self._llm_guard(event)):
                 return blocked
             self._access_file(event)
-            return formatter.format_download_result((await self.runner.export_calendar())["file"])
+            return await self._tool_file_result(event, (await self.runner.export_calendar())["file"])
         except SustechError as e:
             return e.user_message
         except Exception:

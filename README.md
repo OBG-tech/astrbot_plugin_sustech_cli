@@ -2,7 +2,7 @@
 
 AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustech-cli) 查询 SUSTech 个人课程信息（Blackboard DDL、TIS 课表、课程列表），并在严格的权限、路径和确认控制下支持附件下载、课表导出和 Blackboard 作业提交。
 
-详细设计见 [`docs/designs/v1-design.md`](docs/designs/v1-design.md)。
+详细设计见 [`docs/designs/v1-design.md`](docs/designs/v1-design.md)；聊天内文件投递设计见 [`docs/designs/v1.1-file-delivery-design.md`](docs/designs/v1.1-file-delivery-design.md)。
 
 ## 功能
 
@@ -16,8 +16,8 @@ AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustec
 | `/sustech-courses [query]` | 查询 Blackboard 课程列表 |
 | `/sustech-contents <course_id> [parent_id]` | 列出一层课程内容（文件夹可继续展开） |
 | `/sustech-attachments <course_id> <content_id>` | 列出内容项的附件（含下载所需 ID） |
-| `/sustech-download <course_id> <content_id> <attachment_id>` | 下载附件到受控输出目录 |
-| `/sustech-calendar-export` | 导出课表为 iCalendar 文件 |
+| `/sustech-download <course_id> <content_id> <attachment_id>` | 下载附件；QQ 官方机器人和 WebChat 默认同时投递文件，其他平台回退为纯文本 |
+| `/sustech-calendar-export` | 导出课表为 iCalendar 文件；QQ 官方机器人和 WebChat 默认同时投递文件，其他平台回退为纯文本 |
 | `/sustech-submit-preview <course_id> <content_id\|-> <file> [comment]` | 生成作业提交预览（不提交） |
 | `/sustech-submit-confirm <token>` | 对已确认的预览执行提交 |
 
@@ -26,6 +26,8 @@ AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustec
 `sustech_get_deadlines`、`sustech_get_schedule`、`sustech_get_courses`、`sustech_get_course_contents`、`sustech_get_content_attachments`、`sustech_download_attachment`、`sustech_export_calendar`、`sustech_prepare_assignment_submission`。
 
 其中 `sustech_prepare_assignment_submission` 只能生成预览；真正的提交必须由用户显式执行 `/sustech-submit-confirm <token>`。
+
+自然语言触发 `sustech_download_attachment` / `sustech_export_calendar` 时，若当前平台在 `file_message_platforms` 白名单内（默认 QQ 官方机器人、WebChat）且 `send_file_in_chat` 开启，插件会通过主动消息把文件附件直接发到当前会话，工具返回文本告知模型投递结果；不支持的平台只返回文本摘要。
 
 ### 第一版不支持
 
@@ -66,6 +68,8 @@ AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustec
    private_only: true
    allowed_users: [<管理员用户 ID>]
    download_root: data/sustech-cli/files
+   send_file_in_chat: true
+   file_message_platforms: [qqofficial, webchat]
    input_root: data/sustech-cli/inputs
    ```
 

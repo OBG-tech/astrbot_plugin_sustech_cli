@@ -1,5 +1,5 @@
 name: astrbot_plugin_sustech_cli
 desc: 通过本机 sustech 命令行查询课程信息的 AstrBot 插件
-version: 1.0.0
+version: 1.2.0
 author: OBG-tech
 repo: https://github.com/OBG-tech/astrbot_plugin_sustech_cli
