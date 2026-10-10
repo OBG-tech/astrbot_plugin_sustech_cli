@@ -61,7 +61,14 @@ if os.environ.get("FAKE_SLEEP"):
     ok("slept", {})
 
 if os.environ.get("FAKE_ERROR_CODE"):
-    fail(os.environ["FAKE_ERROR_CODE"], "boom-secret-detail", 1)
+    fail(
+        os.environ["FAKE_ERROR_CODE"],
+        os.environ.get("FAKE_ERROR_MESSAGE", "download request failed"),
+        1,
+    )
+if os.environ.get("FAKE_RAW_ERROR"):
+    print(os.environ["FAKE_RAW_ERROR"], file=sys.stderr)
+    sys.exit(int(os.environ.get("FAKE_RAW_EXIT", "1")))
 
 if args[:2] == ["auth", "status"]:
     ok("auth status", {
@@ -240,20 +247,54 @@ class EnvAndProcessTests(RunnerTestBase):
         self.assertEqual(data["attachments"][0]["fileName"], "week3.pdf")
         self.assertEqual(data["contentId"], "_k1")
 
-    async def test_nonzero_exit_maps_known_error_code(self):
-        with mock.patch.dict(os.environ, {"FAKE_ERROR_CODE": "MASTER_PASSWORD_INVALID"}):
+    async def test_nonzero_exit_maps_known_error_code_and_detail(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "FAKE_ERROR_CODE": "MASTER_PASSWORD_INVALID",
+                "FAKE_ERROR_MESSAGE": "authentication backend rejected request",
+            },
+        ):
             with self.assertRaises(CliError) as ctx:
                 await self.runner.status()
         self.assertEqual(ctx.exception.code, "MASTER_PASSWORD_INVALID")
-        self.assertEqual(ctx.exception.user_message, "SUSTech 主密码不正确")
-        # stderr/stdout 原文不得进入用户消息
-        self.assertNotIn("boom-secret-detail", ctx.exception.user_message)
+        self.assertIn("SUSTech 主密码不正确", ctx.exception.user_message)
+        self.assertIn("authentication backend rejected request", ctx.exception.user_message)
+        self.assertIn("CLI 退出码：1", ctx.exception.user_message)
+        self.assertNotIn("test-master-password", ctx.exception.user_message)
 
-    async def test_unknown_error_code_uses_fallback(self):
-        with mock.patch.dict(os.environ, {"FAKE_ERROR_CODE": "SOMETHING_NEW"}):
+    async def test_unknown_error_code_keeps_code_and_original_message(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "FAKE_ERROR_CODE": "DOWNLOAD_HTTP_ERROR",
+                "FAKE_ERROR_MESSAGE": "Blackboard download failed: HTTP 403",
+            },
+        ):
             with self.assertRaises(CliError) as ctx:
-                await self.runner.status()
-        self.assertEqual(ctx.exception.user_message, "SUSTech 查询失败，请稍后重试。")
+                await self.runner.download_attachment("_c1", "_k1", "_a1")
+        self.assertEqual(ctx.exception.code, "DOWNLOAD_HTTP_ERROR")
+        self.assertIn("错误代码：DOWNLOAD_HTTP_ERROR", ctx.exception.user_message)
+        self.assertIn("Blackboard download failed: HTTP 403", ctx.exception.user_message)
+
+    async def test_non_json_stderr_is_returned_for_download_failure(self):
+        with mock.patch.dict(
+            os.environ,
+            {"FAKE_RAW_ERROR": "fetch attachment: connect ECONNREFUSED 127.0.0.1:443"},
+        ):
+            with self.assertRaises(CliError) as ctx:
+                await self.runner.download_attachment("_c1", "_k1", "_a1")
+        self.assertIn("fetch attachment: connect ECONNREFUSED", ctx.exception.user_message)
+        self.assertIn("CLI 退出码：1", ctx.exception.user_message)
+
+    async def test_original_detail_redacts_credentials_and_plugin_root(self):
+        raw = f"download failed password=test-master-password path={self.download_root}/download/x.pdf"
+        with mock.patch.dict(os.environ, {"FAKE_RAW_ERROR": raw}):
+            with self.assertRaises(CliError) as ctx:
+                await self.runner.download_attachment("_c1", "_k1", "_a1")
+        self.assertIn("download failed", ctx.exception.user_message)
+        self.assertNotIn("test-master-password", ctx.exception.user_message)
+        self.assertNotIn(str(self.download_root), ctx.exception.user_message)
 
     async def test_profile_not_found_message(self):
         with mock.patch.dict(os.environ, {"FAKE_ERROR_CODE": "CREDENTIAL_PROFILE_NOT_FOUND"}):

@@ -91,6 +91,12 @@ AstrBot 插件：通过本机 [`sustech-cli`](https://github.com/OBG-tech/sustec
 python3 -m unittest discover -s tests -v
 ```
 
+### 下载失败诊断
+
+下载失败时，插件会保留 `sustech` 返回的错误代码、退出码和原始错误摘要，直接显示在失败消息中；密码、Cookie、令牌等敏感字段会被隐藏，诊断信息最多保留 2000 个字符。这样可以区分凭证、权限、网络、附件 ID 和 Blackboard 服务端错误，而不是统一显示“查询失败”。
+
+如果错误代码显示为 `DOWNLOAD_HTTP_ERROR`、`BLACKBOARD_ATTACHMENT_NOT_FOUND` 等，先按原始错误检查附件 ID 和 Blackboard 登录状态；插件本身不会自动重试下载。
+
 ## 手动验收
 
 先在服务器上直接验证 CLI（导出 `SUSTECH_MASTER_PASSWORD` 后执行 `sustech auth status --json`、`sustech bb deadlines --days 14 --json` 等，见设计文档 §13.5），再在 AstrBot 中依次测试显式命令、自然语言查询和负面场景（未授权用户、群聊下载、任意路径写入、文件替换后确认、token 过期、提交结果不确定）。

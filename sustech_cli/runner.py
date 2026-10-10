@@ -32,6 +32,7 @@ from .errors import (
     ConfigError,
     ValidationError,
     message_for_cli_error,
+    sanitize_cli_error_detail,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,6 @@ _SUBMISSION_STATES: frozenset[str] = frozenset(
     {"not_attempted", "in_progress", "submitted", "completed", "mixed", "other"}
 )
 
-# opaque token：非空、≤256 字符，禁止路径分隔符、空白与 shell 元字符
 _OPAQUE_ID_RE = re.compile(r"^[A-Za-z0-9_\-.:=]{1,256}$")
 _SEMESTER_RE = re.compile(r"^\d{4}-\d{4}-\d+$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -66,6 +66,7 @@ _MAX_COMMENT_LEN = 2000
 _MISSING_CREDENTIALS_MESSAGE = (
     "SUSTech 凭证尚未配置，请在 AstrBot 插件设置中填写学号与密码（或加密存储主密码）。"
 )
+
 
 
 @dataclass(frozen=True)
@@ -313,6 +314,9 @@ class SustechRunner:
             raise ConfigError(_MISSING_CREDENTIALS_MESSAGE)
 
         env = os.environ.copy()
+        # 清理宿主进程中可能残留的凭证，避免配置为空时误用旧环境变量。
+        for key in ("SUSTECH_SID", "SUSTECH_PASSWORD", "SUSTECH_MASTER_PASSWORD"):
+            env.pop(key, None)
         if has_direct:
             # sustech-cli 凭证解析顺序中 environment 优先于加密存储
             env["SUSTECH_SID"] = self._sid
@@ -324,14 +328,24 @@ class SustechRunner:
         started = time.monotonic()
         exit_code: int | None = None
         async with self._semaphore:
-            process = await asyncio.create_subprocess_exec(
-                self._command,
-                *args,
-                "--json",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    self._command,
+                    *args,
+                    "--json",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
+                )
+            except OSError as exc:
+                detail = sanitize_cli_error_detail(
+                    f"{type(exc).__name__}: {exc}",
+                    secrets=self._diagnostic_secrets(),
+                )
+                raise CliError(
+                    message_for_cli_error(None, detail=detail),
+                    detail=detail,
+                ) from exc
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     process.communicate(), timeout=self._timeout
@@ -348,26 +362,40 @@ class SustechRunner:
             exit_code = process.returncode
 
         elapsed_ms = int((time.monotonic() - started) * 1000)
-        # 日志只记录 operation / elapsed / exit_code，绝不记录密码与 stderr（§10.4）
+        # 日志只记录 operation / elapsed / exit_code，绝不记录密码与 CLI 原文。
         logger.info(
             "operation=%s elapsed_ms=%d exit_code=%s", operation, elapsed_ms, exit_code
         )
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
+        detail = sanitize_cli_error_detail(
+            self._extract_error_detail(stdout_text, stderr_bytes),
+            secrets=self._diagnostic_secrets(),
+        )
+        code = self._extract_error_code(stdout_text, stderr_bytes)
         if exit_code != 0:
             raise CliError(
-                message_for_cli_error(self._extract_error_code(stdout_text, stderr_bytes)),
-                code=self._extract_error_code(stdout_text, stderr_bytes),
+                message_for_cli_error(code, detail=detail, exit_code=exit_code),
+                code=code,
+                detail=detail,
+                exit_code=exit_code,
             )
         try:
             envelope = json.loads(stdout_text) if stdout_text else {}
         except json.JSONDecodeError:
-            raise CliError(message_for_cli_error(None)) from None
+            raise CliError(
+                message_for_cli_error(None, detail=detail), detail=detail
+            ) from None
         if not isinstance(envelope, dict):
-            raise CliError(message_for_cli_error(None))
-        embedded_code = self._extract_error_code(stdout_text, b"")
-        if embedded_code:
-            raise CliError(message_for_cli_error(embedded_code), code=embedded_code)
+            raise CliError(message_for_cli_error(None, detail=detail), detail=detail)
+        # 即使 CLI 错误地以 0 退出，ok=false / error 信封仍然是失败。
+        if envelope.get("ok") is False or isinstance(envelope.get("error"), dict):
+            raise CliError(
+                message_for_cli_error(code, detail=detail, exit_code=exit_code),
+                code=code,
+                detail=detail,
+                exit_code=exit_code,
+            )
         # sustech-cli --json 输出信封 {schemaVersion, ok, command, data}，
         # 真实负载在 data 字段内。
         payload = envelope.get("data")
@@ -375,9 +403,50 @@ class SustechRunner:
             return payload
         return envelope
 
+    def _credential_values(self) -> tuple[str, ...]:
+        return self._master_password, self._sid, self._cas_password
+
+    def _diagnostic_secrets(self) -> tuple[str, ...]:
+        return self._credential_values() + (
+            str(self._download_root.resolve()),
+            str(self._input_root.resolve()),
+        )
+
+    @staticmethod
+    def _extract_error_detail(stdout_text: str, stderr_bytes: bytes) -> str:
+        """提取 CLI error.message/details 或非 JSON 输出，避免吞掉原始原因。"""
+        parts: list[str] = []
+        for text in (stdout_text, stderr_bytes.decode("utf-8", errors="replace")):
+            text = text.strip()
+            if not text:
+                continue
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                parts.append(text)
+                continue
+            if not isinstance(payload, dict):
+                parts.append(text)
+                continue
+            error = payload.get("error")
+            if isinstance(error, dict):
+                message = error.get("message")
+                if isinstance(message, str) and message.strip():
+                    parts.append(message.strip())
+                details = error.get("details")
+                if details:
+                    parts.append(json.dumps(details, ensure_ascii=False, separators=(",", ":")))
+            elif payload.get("ok") is False:
+                parts.append(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        unique: list[str] = []
+        for part in parts:
+            if part not in unique:
+                unique.append(part)
+        return "\n".join(unique)
+
     @staticmethod
     def _extract_error_code(stdout_text: str, stderr_bytes: bytes) -> str | None:
-        """从 CLI 输出中提取错误码（不向外暴露任何原文）。"""
+        """从 CLI 输出中提取错误码。"""
         for text in (stdout_text, stderr_bytes.decode("utf-8", errors="replace")):
             text = text.strip()
             if not text:
@@ -391,9 +460,9 @@ class SustechRunner:
                 if isinstance(error, dict) and isinstance(error.get("code"), str):
                     return error["code"]
                 code = payload.get("code")
-                # 顶层 code 只有已知凭证类错误码才视为失败；
-                # 其余（如 DO_NOT_RETRY_AUTOMATICALLY）交给上层格式化（§12.6）。
-                if isinstance(code, str) and code in CLI_ERROR_MESSAGES:
+                if isinstance(code, str) and (
+                    code in CLI_ERROR_MESSAGES or payload.get("ok") is False
+                ):
                     return code
         return None
 
@@ -414,7 +483,11 @@ class SustechRunner:
                 written.unlink()
             raise
         if not written.is_file():
-            raise CliError(message_for_cli_error(None))
+            detail = f"CLI 返回成功，但未找到输出文件：operation={operation}"
+            raise CliError(
+                message_for_cli_error(None, detail=detail),
+                detail=detail,
+            )
         size = written.stat().st_size
         if size > self._max_download_bytes:
             written.unlink()

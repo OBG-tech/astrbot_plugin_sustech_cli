@@ -1,11 +1,13 @@
 """插件内部错误类型。
 
-所有异常的 ``user_message`` 都可以安全地展示给用户：
-绝不包含主密码、本地路径、Node.js 堆栈或 CLI stderr 原文。
-对应设计文档 §11 错误映射。
+异常消息会向聊天用户展示。CLI 诊断信息保留原始错误的可定位部分，
+但会截断并隐藏密码、令牌、Cookie 等敏感字段。
 """
 
 from __future__ import annotations
+
+import re
+from typing import Iterable
 
 # 设计文档 §11：sustech-cli 错误码 -> 用户可见提示
 CLI_ERROR_MESSAGES: dict[str, str] = {
@@ -22,20 +24,49 @@ CLI_ERROR_MESSAGES: dict[str, str] = {
 }
 
 _FALLBACK_MESSAGE = "SUSTech 查询失败，请稍后重试。"
+_MAX_CLI_DETAIL_LENGTH = 2000
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_SENSITIVE_FIELD_RE = re.compile(
+    r"(?i)(password|passwd|token|cookie|authorization|set-cookie)"
+    r"(\s*[:=]\s*)([^\s,;]+)"
+)
 
 
-def message_for_cli_error(code: str | None) -> str:
-    """将 CLI 错误码映射为用户可见提示；未识别的错误码返回通用文案。"""
-    if code and code in CLI_ERROR_MESSAGES:
-        return CLI_ERROR_MESSAGES[code]
-    return _FALLBACK_MESSAGE
+def sanitize_cli_error_detail(detail: str | None, *, secrets: Iterable[str] = ()) -> str:
+    """保留 CLI 原始诊断，同时隐藏凭证和控制字符。"""
+    text = str(detail or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
+    text = _ANSI_ESCAPE_RE.sub("", text)
+    for secret in sorted({str(value) for value in secrets if str(value)}, key=len, reverse=True):
+        text = text.replace(secret, "[已隐藏]")
+    text = _SENSITIVE_FIELD_RE.sub(r"\1\2[已隐藏]", text)
+    text = "".join(char for char in text if char in "\n\t" or ord(char) >= 32)
+    if len(text) > _MAX_CLI_DETAIL_LENGTH:
+        text = text[:_MAX_CLI_DETAIL_LENGTH].rstrip() + "…"
+    return text
+
+
+def message_for_cli_error(
+    code: str | None,
+    *,
+    detail: str | None = None,
+    exit_code: int | None = None,
+) -> str:
+    """生成包含错误码和 CLI 原始诊断的用户错误消息。"""
+    message = CLI_ERROR_MESSAGES.get(code or "", _FALLBACK_MESSAGE)
+    lines = [message]
+    if code:
+        lines.append(f"错误代码：{code}")
+    if exit_code is not None:
+        lines.append(f"CLI 退出码：{exit_code}")
+    if detail:
+        lines.append(f"CLI 原始错误（敏感字段已隐藏）：{detail}")
+    return "\n".join(lines)
 
 
 class SustechError(Exception):
-    """插件错误基类。
-
-    ``user_message`` 是唯一允许发送到聊天或日志的消息文本。
-    """
+    """插件内部错误类型。"""
 
     def __init__(self, user_message: str, *, code: str | None = None) -> None:
         super().__init__(user_message)
@@ -64,10 +95,19 @@ class ValidationError(SustechError):
 
 
 class CliError(SustechError):
-    """CLI 非零退出或输出无法解析。
+    """CLI 非零退出或输出无法解析。"""
 
-    ``code`` 为可识别的 sustech-cli 错误码，无法识别时为 None。
-    """
+    def __init__(
+        self,
+        user_message: str,
+        *,
+        code: str | None = None,
+        detail: str | None = None,
+        exit_code: int | None = None,
+    ) -> None:
+        super().__init__(user_message, code=code)
+        self.detail = detail
+        self.exit_code = exit_code
 
 
 class CliTimeoutError(SustechError):
